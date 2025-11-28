@@ -30,6 +30,7 @@ fn main() {
     let input = DebtCalculationInput {
         total_amount: dec!(360_000),
         interest_per_year: dec!(10.5),
+        down_payment_percent: dec!(5),
         total_months: 420,
     };
 
