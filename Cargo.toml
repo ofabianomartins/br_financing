@@ -1,7 +1,7 @@
 [package]
 name = "br_financial"
 description = "It's a lib to export calc of financing real state"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 authors = ["Fabiano Martins <fabiano.paula.martins@gmail.com>"]
 license = "MIT"
