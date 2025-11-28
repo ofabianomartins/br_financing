@@ -24,8 +24,28 @@ And then in your code:
 ```rust
 // Example usage will be added here.
 // For now, please refer to the documentation on docs.rs.
+
+
 fn main() {
-    println!("Hello, br_financial!");
+    let input = DebtCalculationInput {
+        total_amount: dec!(360_000),
+        interest_per_year: dec!(10.5),
+        total_months: 420,
+    };
+
+    match calculate_debt_trajectory(input) {
+        Ok(result) => {
+            println!("SAC First Payment: {:.2}", result.sac_table.first_payment);
+            println!("SAC Last Payment:  {:.2}", result.sac_table.last_payment);
+            println!("SAC Total Paid:    {:.2}", result.sac_table.total_paid);
+
+            println!("Price Fixed Payment: {:.2}", result.price_table.fixed_payment);
+            println!("Price Total Paid:    {:.2}", result.price_table.total_paid);
+        }
+        Err(e) => {
+            eprintln!("Error calculating debt trajectory: {}", e);
+        }
+    }
 }
 ```
 
