@@ -1,0 +1,11 @@
+[package]
+name = "br_financial"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.100"
+rust_decimal = { version = "1.39.0", features = ["maths"] }
+rust_decimal_macros = "1.39.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1" }
