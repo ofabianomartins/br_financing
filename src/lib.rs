@@ -48,9 +48,9 @@
 //! }
 //! ```
 
-use rust_decimal::{Decimal, MathematicalOps};
+use serde::{Serialize, Deserialize};
+use rust_decimal::{ Decimal, MathematicalOps };
 use rust_decimal_macros::dec;
-use serde::{Deserialize, Serialize};
 
 /// Input parameters for debt trajectory calculation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -71,7 +71,7 @@ pub struct MonthPayment {
     /// The portion of the payment that goes towards reducing the principal.
     pub current_amortization: Decimal,
     /// The portion of the payment that covers interest.
-    pub current_interest: Decimal,
+    pub current_interest: Decimal
 }
 
 /// Contains the results of a financing calculation using the Price table method.
@@ -121,7 +121,7 @@ pub fn normalize_annual_interest_rate(input: Decimal) -> Decimal {
     let twelve = Decimal::from_str_exact("12").unwrap();
 
     let base = one + percent;
-    let exponent = one / twelve;
+    let exponent  = one / twelve;
 
     let power_result = base.powd(exponent);
 
@@ -140,9 +140,7 @@ pub fn normalize_annual_interest_rate(input: Decimal) -> Decimal {
 /// # Errors
 ///
 /// Returns an error if the `total_months` is zero.
-pub fn calculate_debt_trajectory(
-    input: DebtCalculationInput,
-) -> Result<DebtTrajectoryResult, anyhow::Error> {
+pub fn calculate_debt_trajectory(input: DebtCalculationInput) -> Result<DebtTrajectoryResult, anyhow::Error> {
     // Convert annual percentage to monthly decimal
     let monthly_interest_rate = normalize_annual_interest_rate(input.interest_per_year);
 
@@ -201,11 +199,13 @@ pub fn calculate_price_table(
         let amortization = fixed_payment - interest_payment;
         current_balance -= amortization;
         total_paid += fixed_payment;
-        amortization_curve.push(MonthPayment {
-            new_balance: current_balance.max(dec!(0)),
-            current_amortization: amortization,
-            current_interest: interest_payment,
-        });
+        amortization_curve.push(
+            MonthPayment {
+                new_balance: current_balance.max(dec!(0)),
+                current_amortization: amortization,
+                current_interest: interest_payment
+            }
+        );
     }
 
     Ok(PriceTableResult {
@@ -258,11 +258,13 @@ pub fn calculate_sac_table(
 
         current_balance -= fixed_amortization;
         total_paid += current_payment;
-        amortization_curve.push(MonthPayment {
-            new_balance: current_balance.max(dec!(0)),
-            current_amortization: fixed_amortization,
-            current_interest: interest_payment,
-        });
+        amortization_curve.push(
+            MonthPayment {
+                new_balance: current_balance.max(dec!(0)),
+                current_amortization: fixed_amortization,
+                current_interest: interest_payment
+            }
+        );
     }
 
     Ok(SacTableResult {
@@ -272,4 +274,53 @@ pub fn calculate_sac_table(
         total_paid: total_paid.round_dp(2),
         amortization_curve,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rust_decimal_macros::dec;
+
+    #[test]
+    fn test_calculate_debt_trajectory_happy_path() {
+        let input = DebtCalculationInput {
+            total_amount: dec!(12000),
+            interest_per_year: dec!(12),
+            total_months: 12,
+        };
+
+        let result = calculate_debt_trajectory(input).unwrap();
+
+        // Assertions for SAC table
+        assert_eq!(result.sac_table.fixed_amortization.round_dp(2), dec!(1000.00));
+        assert_eq!(result.sac_table.first_payment.round_dp(2), dec!(1113.87));
+        assert_eq!(result.sac_table.last_payment.round_dp(2), dec!(1009.49));
+        assert_eq!(result.sac_table.total_paid.round_dp(2), dec!(12740.13));
+
+        // Assertions for Price table
+        assert_eq!(result.price_table.fixed_payment.round_dp(2), dec!(1062.74));
+        assert_eq!(result.price_table.total_paid.round_dp(2), dec!(12752.94));
+    }
+
+    #[test]
+    fn test_normalize_annual_interest_rate() {
+        // 12% per year should be a bit less than 1% per month when compounded.
+        let annual_rate = dec!(12);
+        let monthly_rate = normalize_annual_interest_rate(annual_rate);
+        // Effective monthly rate for 12% annual is approx 0.9488%
+        // (1.12)^(1/12) - 1 = 0.009488...
+        // Let's check for a value in that range.
+        assert!(monthly_rate > dec!(0.0094) && monthly_rate < dec!(0.0095));
+    }
+
+    #[test]
+    fn test_zero_months_error() {
+        let input = DebtCalculationInput {
+            total_amount: dec!(100000),
+            interest_per_year: dec!(10),
+            total_months: 0,
+        };
+        let result = calculate_debt_trajectory(input);
+        assert!(result.is_err());
+    }
 }
