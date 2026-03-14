@@ -22,7 +22,7 @@
 //! SAC and Price tables:
 //!
 //! ```rust
-//! use br_financial::{calculate_debt_trajectory, DebtCalculationInput};
+//! use br_financial::{calculate_debt_trajectory, DebtCalculationInput, DebtCalculationType};
 //! use rust_decimal_macros::dec;
 //!
 //! fn main() {
@@ -31,16 +31,12 @@
 //!         interest_per_year: dec!(10.5),
 //!         down_payment_percent: dec!(0),
 //!         total_months: 420,
+//!         debt_type: DebtCalculationType::Sac
 //!     };
 //!
 //!     match calculate_debt_trajectory(input) {
 //!         Ok(result) => {
-//!             println!("SAC First Payment: {:.2}", result.sac_table.first_payment);
-//!             println!("SAC Last Payment:  {:.2}", result.sac_table.last_payment);
-//!             println!("SAC Total Paid:    {:.2}", result.sac_table.total_paid);
-//!
-//!             println!("Price Fixed Payment: {:.2}", result.price_table.fixed_payment);
-//!             println!("Price Total Paid:    {:.2}", result.price_table.total_paid);
+//!             println!("Price Total Paid:    {:.2}", result.table.total_paid);
 //!         }
 //!         Err(e) => {
 //!             eprintln!("Error calculating debt trajectory: {}", e);
@@ -54,6 +50,10 @@ use rust_decimal::{ Decimal, MathematicalOps };
 use rust_decimal_macros::dec;
 
 /// Input parameters for debt trajectory calculation.
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
+pub enum DebtCalculationType { Sac = 0, Price = 1 }
+
+/// Input parameters for debt trajectory calculation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DebtCalculationInput {
     /// The total principal amount of the loan.
@@ -65,6 +65,7 @@ pub struct DebtCalculationInput {
     pub down_payment_percent: Decimal,
     /// The total number of months for the loan.
     pub total_months: u32,
+    pub debt_type: DebtCalculationType
 }
 
 /// Represents the payment details for a single month.
@@ -80,24 +81,7 @@ pub struct MonthPayment {
 
 /// Contains the results of a financing calculation using the Price table method.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PriceTableResult {
-    /// The fixed monthly payment amount.
-    pub fixed_payment: Decimal,
-    /// The total amount paid over the lifetime of the loan.
-    pub total_paid: Decimal,
-    /// A vector containing the payment details for each month.
-    pub amortization_curve: Vec<MonthPayment>,
-}
-
-/// Contains the results of a financing calculation using the SAC method.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SacTableResult {
-    /// The fixed amount of principal paid off each month.
-    pub fixed_amortization: Decimal,
-    /// The amount of the first payment, which is the highest.
-    pub first_payment: Decimal,
-    /// The amount of the last payment, which is the lowest.
-    pub last_payment: Decimal,
+pub struct TableResult {
     /// The total amount paid over the lifetime of the loan.
     pub total_paid: Decimal,
     /// A vector containing the payment details for each month.
@@ -109,10 +93,8 @@ pub struct SacTableResult {
 pub struct DebtTrajectoryResult {
     /// The initial total amount of the loan.
     pub financed_amount: Decimal,
-    /// The results calculated using the Price table method.
-    pub price_table: PriceTableResult,
     /// The results calculated using the SAC method.
-    pub sac_table: SacTableResult,
+    pub table: TableResult,
 }
 
 /// Calculates the down payment amount based on a total amount and a percentage.
@@ -169,19 +151,46 @@ pub fn calculate_debt_trajectory(input: DebtCalculationInput) -> Result<DebtTraj
     let monthly_interest_rate = normalize_annual_interest_rate(input.interest_per_year);
     let financed_amount = clean_down_payment(input.total_amount, input.down_payment_percent);
 
-    let price_table = calculate_price_table(
+    let table = calculate_table(
         financed_amount,
         monthly_interest_rate,
         input.total_months,
+        input.debt_type
     )?;
 
-    let sac_table = calculate_sac_table(
-        financed_amount,
-        monthly_interest_rate,
-        input.total_months,
-    )?;
+    Ok(DebtTrajectoryResult { financed_amount, table })
+}
 
-    Ok(DebtTrajectoryResult { financed_amount, price_table, sac_table })
+/// Calculates the financing trajectory using the Price table (fixed payments).
+///
+/// The Price table formula is: PMT = P * [i(1 + i)^n] / [(1 + i)^n – 1]
+///
+/// # Arguments
+///
+/// * `total_amount` - The principal loan amount.
+/// * `monthly_interest_rate` - The effective monthly interest rate as a decimal (not percentage).
+/// * `total_months` - The total number of payments.
+///
+/// # Errors
+///
+/// Returns an error if `total_months` is zero.
+pub fn calculate_table(
+    total_amount: Decimal,
+    monthly_interest_rate: Decimal,
+    total_months: u32,
+    debt_type: DebtCalculationType
+) -> Result<TableResult, anyhow::Error> {
+    if total_months == 0 {
+        return Err(anyhow::anyhow!("Total months cannot be zero."));
+    }
+
+    if debt_type == DebtCalculationType::Sac {
+        return calculate_sac_table(total_amount, monthly_interest_rate, total_months);
+    } else if debt_type == DebtCalculationType::Price {
+        return calculate_price_table(total_amount, monthly_interest_rate, total_months);
+    } else {
+        return Err(anyhow::anyhow!("DebtType is not defined."));
+    }
 }
 
 /// Calculates the financing trajectory using the Price table (fixed payments).
@@ -201,7 +210,7 @@ pub fn calculate_price_table(
     total_amount: Decimal,
     monthly_interest_rate: Decimal,
     total_months: u32,
-) -> Result<PriceTableResult, anyhow::Error> {
+) -> Result<TableResult, anyhow::Error> {
     if total_months == 0 {
         return Err(anyhow::anyhow!("Total months cannot be zero."));
     }
@@ -229,8 +238,7 @@ pub fn calculate_price_table(
         );
     }
 
-    Ok(PriceTableResult {
-        fixed_payment: fixed_payment.round_dp(2),
+    Ok(TableResult {
         total_paid: total_paid.round_dp(2),
         amortization_curve,
     })
@@ -254,28 +262,19 @@ pub fn calculate_sac_table(
     total_amount: Decimal,
     monthly_interest_rate: Decimal,
     total_months: u32,
-) -> Result<SacTableResult, anyhow::Error> {
+) -> Result<TableResult, anyhow::Error> {
     if total_months == 0 {
         return Err(anyhow::anyhow!("Total months cannot be zero."));
     }
 
     let fixed_amortization = total_amount / Decimal::from(total_months);
     let mut current_balance = total_amount;
-    let mut first_payment: Option<Decimal> = None;
-    let mut last_payment: Option<Decimal> = None;
     let mut total_paid = dec!(0);
     let mut amortization_curve = Vec::new();
 
     for month in 0..total_months {
         let interest_payment = current_balance * monthly_interest_rate;
         let current_payment = fixed_amortization + interest_payment;
-
-        if month == 0 {
-            first_payment = Some(current_payment);
-        }
-        if month == total_months - 1 {
-            last_payment = Some(current_payment);
-        }
 
         current_balance -= fixed_amortization;
         total_paid += current_payment;
@@ -288,10 +287,7 @@ pub fn calculate_sac_table(
         );
     }
 
-    Ok(SacTableResult {
-        fixed_amortization: fixed_amortization.round_dp(2),
-        first_payment: first_payment.unwrap_or_default().round_dp(2),
-        last_payment: last_payment.unwrap_or_default().round_dp(2),
+    Ok(TableResult {
         total_paid: total_paid.round_dp(2),
         amortization_curve,
     })
@@ -309,19 +305,13 @@ mod tests {
             interest_per_year: dec!(12),
             down_payment_percent: dec!(0),
             total_months: 12,
+            debt_type: DebtCalculationType::Sac
         };
 
         let result = calculate_debt_trajectory(input).unwrap();
 
         // Assertions for SAC table
-        assert_eq!(result.sac_table.fixed_amortization.round_dp(2), dec!(1000.00));
-        assert_eq!(result.sac_table.first_payment.round_dp(2), dec!(1113.87));
-        assert_eq!(result.sac_table.last_payment.round_dp(2), dec!(1009.49));
-        assert_eq!(result.sac_table.total_paid.round_dp(2), dec!(12740.13));
-
-        // Assertions for Price table
-        assert_eq!(result.price_table.fixed_payment.round_dp(2), dec!(1062.74));
-        assert_eq!(result.price_table.total_paid.round_dp(2), dec!(12752.94));
+        assert_eq!(result.table.total_paid.round_dp(2), dec!(12740.13));
     }
 
     #[test]
@@ -331,21 +321,14 @@ mod tests {
             interest_per_year: dec!(12),
             down_payment_percent: dec!(10.0),
             total_months: 12,
+            debt_type: DebtCalculationType::Price
         };
 
         let result = calculate_debt_trajectory(input).unwrap();
 
         assert_eq!(result.financed_amount.round_dp(2), dec!(10800.00));
 
-        // Assertions for SAC table
-        assert_eq!(result.sac_table.fixed_amortization.round_dp(2), dec!(900.00));
-        assert_eq!(result.sac_table.first_payment.round_dp(2), dec!(1002.48));
-        assert_eq!(result.sac_table.last_payment.round_dp(2), dec!(908.54));
-        assert_eq!(result.sac_table.total_paid.round_dp(2), dec!(11466.11));
-
-        // Assertions for Price table
-        assert_eq!(result.price_table.fixed_payment.round_dp(2), dec!(956.47));
-        assert_eq!(result.price_table.total_paid.round_dp(2), dec!(11477.64));
+        assert_eq!(result.table.total_paid.round_dp(2), dec!(11477.64));
     }
 
     #[test]
@@ -355,21 +338,15 @@ mod tests {
             interest_per_year: dec!(12),
             down_payment_percent: dec!(40),
             total_months: 12,
+            debt_type: DebtCalculationType::Price
         };
 
         let result = calculate_debt_trajectory(input).unwrap();
 
         assert_eq!(result.financed_amount.round_dp(2), dec!(7200.00));
 
-        // Assertions for SAC table
-        assert_eq!(result.sac_table.fixed_amortization.round_dp(2), dec!(600.00));
-        assert_eq!(result.sac_table.first_payment.round_dp(2), dec!(668.32));
-        assert_eq!(result.sac_table.last_payment.round_dp(2), dec!(605.69));
-        assert_eq!(result.sac_table.total_paid.round_dp(2), dec!(7644.08));
-
         // Assertions for Price table
-        assert_eq!(result.price_table.fixed_payment.round_dp(2), dec!(637.65));
-        assert_eq!(result.price_table.total_paid.round_dp(2), dec!(7651.76));
+        assert_eq!(result.table.total_paid.round_dp(2), dec!(7651.76));
     }
 
     #[test]
@@ -390,6 +367,7 @@ mod tests {
             interest_per_year: dec!(10),
             down_payment_percent: dec!(0),
             total_months: 0,
+            debt_type: DebtCalculationType::Price
         };
         let result = calculate_debt_trajectory(input);
         assert!(result.is_err());
