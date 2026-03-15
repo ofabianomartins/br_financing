@@ -14,3 +14,4 @@ rust_decimal = { version = "1.39.0", features = ["maths"] }
 rust_decimal_macros = "1.39.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1" }
+chrono = { version = "0.4", features = ["serde"] }
