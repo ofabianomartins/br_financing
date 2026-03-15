@@ -1,0 +1,329 @@
+use std::collections::BTreeMap;
+
+use serde::{Serialize, Deserialize};
+use rust_decimal::{ Decimal, MathematicalOps };
+use rust_decimal_macros::dec;
+use chrono::{Datelike, NaiveDate};
+
+use crate::locale::Locale;
+
+/// Specifies the amortization system to use.
+///
+/// - `Sac`: Sistema de Amortização Constante — fixed amortization, decreasing payments.
+/// - `Price`: Sistema Francês de Amortização — fixed total payments (PMT).
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
+pub enum DebtCalculationType { Sac = 0, Price = 1 }
+
+/// Input parameters for debt trajectory calculation.
+///
+/// All monetary values use `rust_decimal::Decimal` for precision.
+/// Rates (`insurance_rate`, correction rates) must be normalized decimals
+/// (e.g., `0.005` for 0.5%).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DebtCalculationInput {
+    /// The total principal amount of the loan (e.g., `360000` for R$ 360,000).
+    pub total_amount: Decimal,
+    /// The annual interest rate as a percentage (e.g., `10.5` for 10.5% per year).
+    pub interest_per_year: Decimal,
+    /// The down payment as a percentage of the total amount (e.g., `5` for 5%).
+    pub down_payment_percent: Decimal,
+    /// The total number of monthly installments.
+    pub total_months: u32,
+    /// The amortization system to use (SAC or Price).
+    pub debt_type: DebtCalculationType,
+    /// Normalized monthly insurance rate applied to the outstanding balance
+    /// (e.g., `0.0003` for 0.03%). The resulting cost is `balance * rate + fee`.
+    pub insurance_rate: Decimal,
+    /// Fixed monthly insurance fee added to every installment (e.g., `25.00`).
+    pub insurance_fee: Decimal,
+    /// Fixed monthly administration fee added to every installment (e.g., `30.00`).
+    pub admin_fee: Decimal,
+    /// Day of the month for installment due dates (1–28).
+    pub due_day: u8,
+    /// Start date of the financing. Installment dates are computed as monthly
+    /// offsets from this date.
+    pub start_date: NaiveDate,
+    /// Variable monetary correction rates indexed by issue date.
+    /// Each rate is a normalized decimal (e.g., `0.005` for 0.5%).
+    /// Lookup uses the most recent rate issued on or before the installment due date.
+    /// If no rate is found, zero is used.
+    pub monthly_correction_rates: BTreeMap<NaiveDate, Decimal>,
+    /// Locale for error and validation messages (`Locale::En` or `Locale::PtBr`).
+    pub locale: Locale,
+}
+
+
+/// Internal calculator that holds fixed values for the amortization loop.
+///
+/// Created once per calculation and used to compute each monthly payment.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DebtCalculator {
+    /// Fixed monthly amortization (used by SAC: `total_amount / total_months`).
+    pub fixed_amortization: Decimal,
+    /// Fixed monthly payment (used by Price: PMT formula).
+    pub fixed_payment: Decimal,
+    /// Effective monthly interest rate (derived from annual rate).
+    pub monthly_interest_rate: Decimal,
+    /// Normalized insurance rate applied to the outstanding balance each month.
+    pub insurance_rate: Decimal,
+    /// Fixed monthly insurance fee.
+    pub insurance_fee: Decimal,
+    /// Fixed monthly administration fee.
+    pub admin_fee: Decimal,
+    /// The amortization system (SAC or Price).
+    pub debt_type: DebtCalculationType
+}
+
+impl DebtCalculator {
+
+    /// Computes the payment details for a single month.
+    ///
+    /// The insurance cost is calculated as `current_balance * insurance_rate + insurance_fee`.
+    /// Monetary correction is not applied here — it is handled in the main loop
+    /// after this method returns.
+    ///
+    /// # Arguments
+    ///
+    /// * `current_balance` - The outstanding loan balance at the start of the month.
+    /// * `total_paid` - The cumulative total paid before this month.
+    pub fn next_payment(
+        &self,
+        current_balance: Decimal,
+        total_paid: Decimal,
+    ) -> MonthPayment {
+        let insurance_cost = current_balance * self.insurance_rate + self.insurance_fee;
+
+        match self.debt_type {
+            DebtCalculationType::Sac => {
+                let interest_payment = current_balance * self.monthly_interest_rate;
+                let current_payment = self.fixed_amortization + interest_payment + insurance_cost + self.admin_fee;
+
+                MonthPayment {
+                    due_date: NaiveDate::default(),
+                    new_balance: current_balance.max(dec!(0)),
+                    current_amortization: self.fixed_amortization,
+                    current_interest: interest_payment,
+                    insurance_cost,
+                    admin_fee: self.admin_fee,
+                    monetary_correction: dec!(0),
+                    total_payment: current_payment,
+                    total_paid: total_paid + current_payment,
+                }
+            },
+            DebtCalculationType::Price => {
+                let interest_payment = current_balance * self.monthly_interest_rate;
+                let amortization = self.fixed_payment - interest_payment;
+                let current_payment = amortization + interest_payment + insurance_cost + self.admin_fee;
+
+                MonthPayment {
+                    due_date: NaiveDate::default(),
+                    new_balance: current_balance.max(dec!(0)),
+                    current_amortization: amortization,
+                    current_interest: interest_payment,
+                    insurance_cost,
+                    admin_fee: self.admin_fee,
+                    monetary_correction: dec!(0),
+                    total_payment: current_payment,
+                    total_paid: total_paid + current_payment,
+                }
+            },
+        }
+    }
+
+}
+
+/// Represents the payment details for a single month in the amortization schedule.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MonthPayment {
+    /// The due date for this installment.
+    pub due_date: NaiveDate,
+    /// The remaining loan balance after this month's payment and monetary correction.
+    pub new_balance: Decimal,
+    /// The portion of the payment that reduces the principal.
+    pub current_amortization: Decimal,
+    /// The portion of the payment that covers interest.
+    pub current_interest: Decimal,
+    /// Insurance cost for this month (`balance * insurance_rate + insurance_fee`).
+    pub insurance_cost: Decimal,
+    /// Fixed administration fee for this month.
+    pub admin_fee: Decimal,
+    /// Monetary correction applied to the balance (`current_balance * correction_rate`).
+    pub monetary_correction: Decimal,
+    /// Total payment for this month (amortization + interest + insurance + admin fee + monetary correction).
+    pub total_payment: Decimal,
+    /// Cumulative total paid up to and including this month.
+    pub total_paid: Decimal,
+}
+
+/// Contains the results of a complete financing calculation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TableResult {
+    /// The total amount paid over the lifetime of the loan.
+    pub total_paid: Decimal,
+    /// Total insurance cost paid over the lifetime (rate-based + fixed fee).
+    pub total_insurance: Decimal,
+    /// Total administration fees paid over the lifetime.
+    pub total_admin_fees: Decimal,
+    /// Total monetary correction applied over the lifetime.
+    pub total_monetary_correction: Decimal,
+    /// Month-by-month payment details.
+    pub amortization_curve: Vec<MonthPayment>,
+}
+
+/// Calculates the due date for a given month offset from the start date.
+///
+/// The day is clamped to the last valid day of the target month
+/// (e.g., day 28 in February for non-leap years).
+///
+/// # Arguments
+///
+/// * `start_date` - The financing start date.
+/// * `month_offset` - Number of months after the start date (1-based).
+/// * `due_day` - The desired day of the month (1–28).
+pub fn calculate_due_date(start_date: NaiveDate, month_offset: u32, due_day: u8) -> NaiveDate {
+    let total_months = start_date.month() as u32 + month_offset;
+    let target_year = start_date.year() + ((total_months - 1) / 12) as i32;
+    let target_month = ((total_months - 1) % 12) + 1;
+
+    let last_day_of_month = last_day_of_month(target_year, target_month);
+    let clamped_day = (due_day as u32).min(last_day_of_month);
+
+    NaiveDate::from_ymd_opt(target_year, target_month, clamped_day).unwrap()
+}
+
+/// Returns the last day of a given year-month.
+fn last_day_of_month(year: i32, month: u32) -> u32 {
+    match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 => {
+            if (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0) {
+                29
+            } else {
+                28
+            }
+        }
+        _ => unreachable!(),
+    }
+}
+
+/// Looks up the most recent correction rate issued on or before the given date.
+///
+/// Returns `Decimal::ZERO` if no rate is found in the map.
+///
+/// # Arguments
+///
+/// * `rates` - A `BTreeMap` of issue dates to normalized correction rates.
+/// * `due_date` - The installment due date to look up.
+pub fn lookup_correction_rate(
+    rates: &BTreeMap<NaiveDate, Decimal>,
+    due_date: NaiveDate,
+) -> Decimal {
+    rates
+        .range(..=due_date)
+        .next_back()
+        .map(|(_, &rate)| rate)
+        .unwrap_or(dec!(0))
+}
+
+
+/// Calculates the full amortization table for a financing scenario.
+///
+/// This function builds the month-by-month schedule including interest,
+/// amortization, insurance, administration fees, and monetary correction.
+///
+/// # Monthly Calculation Flow
+///
+/// 1. Compute insurance: `balance * insurance_rate + insurance_fee`
+/// 2. Compute interest: `balance * monthly_interest_rate`
+/// 3. Compute amortization (SAC: fixed | Price: PMT - interest)
+/// 4. Compute monetary correction: `balance * correction_rate`
+/// 5. Total payment = amortization + interest + insurance + admin_fee + monetary_correction
+/// 6. New balance = balance + monetary_correction - amortization
+///
+/// # Arguments
+///
+/// * `total_amount` - The financed principal (after down payment).
+/// * `monthly_interest_rate` - Effective monthly interest rate as a decimal.
+/// * `total_months` - Number of monthly installments.
+/// * `debt_type` - Amortization system (SAC or Price).
+/// * `insurance_rate` - Normalized monthly insurance rate.
+/// * `insurance_fee` - Fixed monthly insurance fee.
+/// * `admin_fee` - Fixed monthly administration fee.
+/// * `due_day` - Day of the month for installment due dates (1–28).
+/// * `start_date` - Financing start date.
+/// * `monthly_correction_rates` - Variable correction rates by issue date.
+pub fn calculate_table(
+    total_amount: Decimal,
+    monthly_interest_rate: Decimal,
+    total_months: u32,
+    debt_type: DebtCalculationType,
+    insurance_rate: Decimal,
+    insurance_fee: Decimal,
+    admin_fee: Decimal,
+    due_day: u8,
+    start_date: NaiveDate,
+    monthly_correction_rates: &BTreeMap<NaiveDate, Decimal>,
+) -> Result<TableResult, anyhow::Error> {
+    if total_months == 0 {
+        return Err(anyhow::anyhow!("Total months cannot be zero."));
+    }
+
+    // Price table formula: PMT = P * [i(1 + i)^n] / [(1 + i)^n – 1]
+    let i_plus_1_pow_n = (dec!(1) + monthly_interest_rate).powu(total_months.into());
+    let fixed_payment =
+        total_amount * (monthly_interest_rate * i_plus_1_pow_n) / (i_plus_1_pow_n - dec!(1));
+    let fixed_amortization = total_amount / Decimal::from(total_months);
+
+    let calculation = DebtCalculator {
+        fixed_payment,
+        fixed_amortization,
+        monthly_interest_rate,
+        insurance_rate,
+        insurance_fee,
+        admin_fee,
+        debt_type
+    };
+
+    let mut current_balance = total_amount;
+    let mut total_paid = dec!(0);
+    let mut total_insurance = dec!(0);
+    let mut total_admin_fees = dec!(0);
+    let mut total_monetary_correction = dec!(0);
+    let mut amortization_curve = Vec::new();
+
+    for month in 1..=total_months {
+        let due_date = calculate_due_date(start_date, month, due_day);
+
+        let mut payment = calculation.next_payment(
+            current_balance,
+            total_paid,
+        );
+
+        payment.due_date = due_date;
+
+        // Apply monetary correction to current balance (before amortization)
+        let correction_rate = lookup_correction_rate(monthly_correction_rates, due_date);
+        let monetary_correction = current_balance * correction_rate;
+        payment.monetary_correction = monetary_correction;
+        payment.total_payment = payment.total_payment + monetary_correction;
+        payment.total_paid = payment.total_paid + monetary_correction;
+        payment.new_balance = (current_balance + monetary_correction - payment.current_amortization).max(dec!(0));
+
+        current_balance = payment.new_balance;
+        total_paid = payment.total_paid;
+        total_insurance += payment.insurance_cost;
+        total_admin_fees += payment.admin_fee;
+        total_monetary_correction += monetary_correction;
+
+        amortization_curve.push(payment);
+    }
+
+    Ok(TableResult {
+        total_paid: total_paid.round_dp(2),
+        total_insurance: total_insurance.round_dp(2),
+        total_admin_fees: total_admin_fees.round_dp(2),
+        total_monetary_correction: total_monetary_correction.round_dp(2),
+        amortization_curve,
+    })
+}

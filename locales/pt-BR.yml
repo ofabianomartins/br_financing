@@ -1,0 +1,5 @@
+total_months_zero: "O total de meses não pode ser zero."
+invalid_due_day: "O dia de vencimento deve estar entre 1 e 28."
+negative_insurance_rate: "A taxa de seguro deve ser maior ou igual a zero."
+negative_insurance_fee: "A taxa fixa de seguro deve ser maior ou igual a zero."
+negative_admin_fee: "A taxa de administração deve ser maior ou igual a zero."
