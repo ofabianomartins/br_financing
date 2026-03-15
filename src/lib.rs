@@ -66,7 +66,7 @@ pub fn calculate_debt_trajectory(
         return Err(anyhow::anyhow!(t!("total_months_zero", locale = locale)));
     }
 
-    if input.due_day < 1 || input.due_day > 31 {
+    if input.due_day < 1 || input.due_day > 28 {
         return Err(anyhow::anyhow!(t!("invalid_due_day", locale = locale)));
     }
 

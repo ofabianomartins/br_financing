@@ -99,7 +99,35 @@ fn test_invalid_due_day_zero() {
 
     let result = calculate_debt_trajectory(input);
     assert!(result.is_err());
-    assert_eq!(result.unwrap_err().to_string(), "Due day must be between 1 and 31.");
+    assert_eq!(result.unwrap_err().to_string(), "Due day must be between 1 and 28.");
+}
+
+#[test]
+fn test_invalid_due_day_29() {
+    let mut input = default_input();
+    input.due_day = 29;
+
+    let result = calculate_debt_trajectory(input);
+    assert!(result.is_err());
+    assert_eq!(result.unwrap_err().to_string(), "Due day must be between 1 and 28.");
+}
+
+#[test]
+fn test_valid_due_day_1() {
+    let mut input = default_input();
+    input.due_day = 1;
+
+    let result = calculate_debt_trajectory(input);
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_valid_due_day_28() {
+    let mut input = default_input();
+    input.due_day = 28;
+
+    let result = calculate_debt_trajectory(input);
+    assert!(result.is_ok());
 }
 
 #[test]
@@ -268,14 +296,13 @@ fn test_monetary_correction_uses_most_recent_rate() {
 
 #[test]
 fn test_due_date_day31_on_february() {
-    let mut input = default_input();
-    input.due_day = 31;
-    input.start_date = NaiveDate::from_ymd_opt(2026, 1, 1).unwrap();
-
-    let result = calculate_debt_trajectory(input).unwrap();
-    // Month 1 (offset 1) -> February 2026 (non-leap year), day 31 should clamp to 28
-    let feb_payment = &result.table.amortization_curve[0];
-    assert_eq!(feb_payment.due_date, NaiveDate::from_ymd_opt(2026, 2, 28).unwrap());
+    // Test calculate_due_date directly (day 31 clamped to 28 in Feb)
+    let due_date = debt_calculator::calculate_due_date(
+        NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(),
+        1, // month offset 1 -> Feb 2026
+        31,
+    );
+    assert_eq!(due_date, NaiveDate::from_ymd_opt(2026, 2, 28).unwrap());
 }
 
 #[test]
