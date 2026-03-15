@@ -1,18 +1,60 @@
-//! `br_financial` is a Rust library for calculating real estate financing in Brazil.
+//! # br_financial
 //!
-//! It provides tools to calculate and compare financing scenarios using the two main
-//! amortization systems in Brazil:
-//! - **SAC (Sistema de Amortização Constante)**: Characterized by fixed amortization payments,
-//!   leading to decreasing total payments over time.
-//! - **Price (Sistema Francês de Amortização)**: Characterized by fixed total payments
-//!   throughout the financing period.
+//! A Rust library for calculating real estate financing in Brazil.
 //!
-//! The library also supports:
-//! - Monthly insurance cost (percentage of outstanding balance + fixed fee)
-//! - Fixed monthly administration fee
-//! - Variable monetary correction rates (BTreeMap lookup by date)
-//! - Date-based installment calculation with configurable due day
-//! - Internationalized error messages via rust-i18n (PT-BR and EN)
+//! ## Amortization Systems
+//!
+//! - **SAC (Sistema de Amortização Constante)**: Fixed amortization payments with
+//!   decreasing total payments over time.
+//! - **Price (Sistema Francês de Amortização)**: Fixed total payments throughout
+//!   the financing period (PMT calculated once upfront).
+//!
+//! ## Additional Features
+//!
+//! - **Insurance**: Monthly cost composed of a normalized rate applied to the
+//!   outstanding balance plus a fixed fee (`insurance_cost = balance * rate + fee`).
+//! - **Administration fee**: Fixed monthly amount added to each installment.
+//! - **Monetary correction**: Variable monthly rate applied to the current balance
+//!   before amortization. Rates are provided as a `BTreeMap<NaiveDate, Decimal>`,
+//!   looked up by the most recent issue date on or before the installment due date.
+//! - **Date-based installments**: Each payment has a due date computed from
+//!   `start_date`, `due_day` (1–28), and month offset.
+//! - **Internationalization**: Error messages localized via `rust-i18n` (EN and PT-BR).
+//!
+//! ## Example
+//!
+//! ```rust
+//! use std::collections::BTreeMap;
+//! use br_financial::{calculate_debt_trajectory, DebtCalculationInput, DebtCalculationType, Locale};
+//! use rust_decimal_macros::dec;
+//! use chrono::NaiveDate;
+//!
+//! let input = DebtCalculationInput {
+//!     total_amount: dec!(360_000),
+//!     interest_per_year: dec!(10.5),
+//!     down_payment_percent: dec!(5),
+//!     total_months: 420,
+//!     debt_type: DebtCalculationType::Sac,
+//!     insurance_rate: dec!(0.0003),
+//!     insurance_fee: dec!(25),
+//!     admin_fee: dec!(30),
+//!     due_day: 15,
+//!     start_date: NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(),
+//!     monthly_correction_rates: BTreeMap::new(),
+//!     locale: Locale::En,
+//! };
+//!
+//! match calculate_debt_trajectory(input) {
+//!     Ok(result) => {
+//!         println!("Financed: {:.2}", result.financed_amount);
+//!         println!("Total Paid: {:.2}", result.table.total_paid);
+//!         println!("Total Insurance: {:.2}", result.table.total_insurance);
+//!         println!("Total Admin Fees: {:.2}", result.table.total_admin_fees);
+//!         println!("Total Monetary Correction: {:.2}", result.table.total_monetary_correction);
+//!     }
+//!     Err(e) => eprintln!("Error: {}", e),
+//! }
+//! ```
 
 use serde::{Serialize, Deserialize};
 use rust_decimal::Decimal;
@@ -35,28 +77,39 @@ pub use debt_calculator::{
 pub use locale::Locale;
 
 
-/// Contains the comprehensive results for both Price and SAC table calculations.
+/// Contains the comprehensive results for a financing calculation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DebtTrajectoryResult {
-    /// The initial total amount of the loan.
+    /// The financed amount after applying the down payment.
     pub financed_amount: Decimal,
-    /// The results calculated using the selected amortization method.
+    /// The detailed amortization table with monthly payments and totals.
     pub table: TableResult,
 }
 
 /// Calculates the debt trajectory for the selected amortization system.
 ///
-/// This is the main entry point of the library. It takes the loan parameters and
-/// returns a struct containing detailed results including insurance, admin fees,
-/// and monetary correction.
+/// This is the main entry point of the library. It validates the input,
+/// converts the annual interest rate to a monthly rate, applies the down
+/// payment, and computes the full amortization schedule including insurance,
+/// administration fees, and monetary correction.
 ///
 /// # Arguments
 ///
-/// * `input` - A `DebtCalculationInput` struct containing all loan parameters.
+/// * `input` - A [`DebtCalculationInput`] containing all loan parameters.
+///
+/// # Returns
+///
+/// A [`DebtTrajectoryResult`] with the financed amount and the complete
+/// amortization table, or a localized error if validation fails.
 ///
 /// # Errors
 ///
-/// Returns a localized error if input validation fails.
+/// Returns a localized error (`Locale::En` or `Locale::PtBr`) when:
+/// - `total_months` is zero
+/// - `due_day` is not between 1 and 28
+/// - `insurance_rate` is negative
+/// - `insurance_fee` is negative
+/// - `admin_fee` is negative
 pub fn calculate_debt_trajectory(
     input: DebtCalculationInput
 ) -> Result<DebtTrajectoryResult, anyhow::Error> {

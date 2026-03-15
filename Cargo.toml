@@ -1,6 +1,6 @@
 [package]
 name = "br_financial"
-description = "It's a lib to export calc of financing real state"
+description = "A Rust library for calculating real estate financing in Brazil, supporting SAC and Price amortization systems with insurance, admin fees, monetary correction, and i18n"
 version = "0.5.0"
 edition = "2024"
 authors = ["Fabiano Martins <fabiano.paula.martins@gmail.com>"]
