@@ -132,12 +132,12 @@ fn test_negative_admin_fee() {
 #[test]
 fn test_insurance_sac_month1() {
     let mut input = default_input();
-    input.insurance_rate = dec!(0.5); // 0.5% of balance
+    input.insurance_rate = dec!(0.005); // 0.5% normalized
 
     let result = calculate_debt_trajectory(input).unwrap();
     let first_month = &result.table.amortization_curve[0];
 
-    // Insurance on 12000 balance = 12000 * 0.5 / 100 = 60
+    // Insurance on 12000 balance = 12000 * 0.005 = 60
     assert_eq!(first_month.insurance_cost.round_dp(2), dec!(60.00));
 }
 
@@ -145,19 +145,19 @@ fn test_insurance_sac_month1() {
 fn test_insurance_price_month1() {
     let mut input = default_input();
     input.debt_type = DebtCalculationType::Price;
-    input.insurance_rate = dec!(1.0); // 1% of balance
+    input.insurance_rate = dec!(0.01); // 1% normalized
 
     let result = calculate_debt_trajectory(input).unwrap();
     let first_month = &result.table.amortization_curve[0];
 
-    // Insurance on 12000 balance = 12000 * 1.0 / 100 = 120
+    // Insurance on 12000 balance = 12000 * 0.01 = 120
     assert_eq!(first_month.insurance_cost.round_dp(2), dec!(120.00));
 }
 
 #[test]
 fn test_total_insurance_accumulated() {
     let mut input = default_input();
-    input.insurance_rate = dec!(0.5);
+    input.insurance_rate = dec!(0.005);
 
     let result = calculate_debt_trajectory(input).unwrap();
     assert!(result.table.total_insurance > dec!(0));
@@ -329,7 +329,7 @@ fn test_lookup_correction_rate_no_match_defaults_zero() {
 #[test]
 fn test_total_payment_includes_all_components_sac() {
     let mut input = default_input();
-    input.insurance_rate = dec!(0.5);
+    input.insurance_rate = dec!(0.005);
     input.admin_fee = dec!(25);
 
     let result = calculate_debt_trajectory(input).unwrap();
@@ -338,7 +338,8 @@ fn test_total_payment_includes_all_components_sac() {
         let expected_total = payment.current_amortization
             + payment.current_interest
             + payment.insurance_cost
-            + payment.admin_fee;
+            + payment.admin_fee
+            + payment.monetary_correction;
         assert_eq!(
             payment.total_payment.round_dp(6),
             expected_total.round_dp(6)
@@ -350,7 +351,7 @@ fn test_total_payment_includes_all_components_sac() {
 fn test_total_payment_includes_all_components_price() {
     let mut input = default_input();
     input.debt_type = DebtCalculationType::Price;
-    input.insurance_rate = dec!(0.3);
+    input.insurance_rate = dec!(0.003);
     input.admin_fee = dec!(10);
 
     let result = calculate_debt_trajectory(input).unwrap();
@@ -359,7 +360,8 @@ fn test_total_payment_includes_all_components_price() {
         let expected_total = payment.current_amortization
             + payment.current_interest
             + payment.insurance_cost
-            + payment.admin_fee;
+            + payment.admin_fee
+            + payment.monetary_correction;
         assert_eq!(
             payment.total_payment.round_dp(6),
             expected_total.round_dp(6)
@@ -372,7 +374,7 @@ fn test_total_payment_includes_all_components_price() {
 #[test]
 fn test_full_sac_trajectory_with_all_features() {
     let mut input = default_input();
-    input.insurance_rate = dec!(0.5);
+    input.insurance_rate = dec!(0.005);
     input.admin_fee = dec!(25);
     let mut rates = BTreeMap::new();
     rates.insert(NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(), dec!(0.3));
@@ -391,7 +393,7 @@ fn test_full_sac_trajectory_with_all_features() {
 fn test_full_price_trajectory_with_all_features() {
     let mut input = default_input();
     input.debt_type = DebtCalculationType::Price;
-    input.insurance_rate = dec!(0.5);
+    input.insurance_rate = dec!(0.005);
     input.admin_fee = dec!(25);
     let mut rates = BTreeMap::new();
     rates.insert(NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(), dec!(0.3));

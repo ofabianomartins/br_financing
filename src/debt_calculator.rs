@@ -45,6 +45,8 @@ pub struct DebtCalculator {
     pub fixed_amortization: Decimal,
     pub fixed_payment: Decimal,
     pub monthly_interest_rate: Decimal,
+    pub insurance_rate: Decimal,
+    pub admin_fee: Decimal,
     pub debt_type: DebtCalculationType
 }
 
@@ -54,15 +56,13 @@ impl DebtCalculator {
         &self,
         current_balance: Decimal,
         total_paid: Decimal,
-        insurance_rate: Decimal,
-        admin_fee: Decimal,
     ) -> MonthPayment {
-        let insurance_cost = current_balance * insurance_rate / dec!(100);
+        let insurance_cost = current_balance * self.insurance_rate;
 
         match self.debt_type {
             DebtCalculationType::Sac => {
                 let interest_payment = current_balance * self.monthly_interest_rate;
-                let current_payment = self.fixed_amortization + interest_payment + insurance_cost + admin_fee;
+                let current_payment = self.fixed_amortization + interest_payment + insurance_cost + self.admin_fee;
 
                 MonthPayment {
                     due_date: NaiveDate::default(),
@@ -70,7 +70,7 @@ impl DebtCalculator {
                     current_amortization: self.fixed_amortization,
                     current_interest: interest_payment,
                     insurance_cost,
-                    admin_fee,
+                    admin_fee: self.admin_fee,
                     monetary_correction: dec!(0),
                     total_payment: current_payment,
                     total_paid: total_paid + current_payment,
@@ -79,7 +79,7 @@ impl DebtCalculator {
             DebtCalculationType::Price => {
                 let interest_payment = current_balance * self.monthly_interest_rate;
                 let amortization = self.fixed_payment - interest_payment;
-                let current_payment = amortization + interest_payment + insurance_cost + admin_fee;
+                let current_payment = amortization + interest_payment + insurance_cost + self.admin_fee;
 
                 MonthPayment {
                     due_date: NaiveDate::default(),
@@ -87,7 +87,7 @@ impl DebtCalculator {
                     current_amortization: amortization,
                     current_interest: interest_payment,
                     insurance_cost,
-                    admin_fee,
+                    admin_fee: self.admin_fee,
                     monetary_correction: dec!(0),
                     total_payment: current_payment,
                     total_paid: total_paid + current_payment,
@@ -205,6 +205,8 @@ pub fn calculate_table(
         fixed_payment,
         fixed_amortization,
         monthly_interest_rate,
+        insurance_rate,
+        admin_fee,
         debt_type
     };
 
@@ -221,8 +223,6 @@ pub fn calculate_table(
         let mut payment = calculation.next_payment(
             current_balance,
             total_paid,
-            insurance_rate,
-            admin_fee,
         );
 
         payment.due_date = due_date;
@@ -232,6 +232,8 @@ pub fn calculate_table(
         let correction_rate = lookup_correction_rate(monthly_correction_rates, due_date);
         let monetary_correction = balance_after_amortization * correction_rate / dec!(100);
         payment.monetary_correction = monetary_correction;
+        payment.total_payment = payment.total_payment + monetary_correction;
+        payment.total_paid = payment.total_paid + monetary_correction;
         payment.new_balance = (balance_after_amortization + monetary_correction).max(dec!(0));
 
         current_balance = payment.new_balance;
