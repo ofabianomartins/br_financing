@@ -7,7 +7,7 @@ use chrono::{Datelike, NaiveDate};
 
 use crate::locale::Locale;
 
-/// Input parameters for debt trajectory calculation.
+/// Input parameters for debt calculation type.
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub enum DebtCalculationType { Sac = 0, Price = 1 }
 
@@ -23,8 +23,10 @@ pub struct DebtCalculationInput {
     /// The total number of months for the loan.
     pub total_months: u32,
     pub debt_type: DebtCalculationType,
-    /// Insurance rate as a percentage applied over the outstanding balance each month.
+    /// Insurance rate as a normalized decimal applied over the outstanding balance each month.
     pub insurance_rate: Decimal,
+    /// Fixed monthly insurance fee applied from beginning to end.
+    pub insurance_fee: Decimal,
     /// Fixed monthly administration fee.
     pub admin_fee: Decimal,
     /// Day of the month for installment due date (1-31, clamped to last day of month).
@@ -46,6 +48,7 @@ pub struct DebtCalculator {
     pub fixed_payment: Decimal,
     pub monthly_interest_rate: Decimal,
     pub insurance_rate: Decimal,
+    pub insurance_fee: Decimal,
     pub admin_fee: Decimal,
     pub debt_type: DebtCalculationType
 }
@@ -57,7 +60,7 @@ impl DebtCalculator {
         current_balance: Decimal,
         total_paid: Decimal,
     ) -> MonthPayment {
-        let insurance_cost = current_balance * self.insurance_rate;
+        let insurance_cost = current_balance * self.insurance_rate + self.insurance_fee;
 
         match self.debt_type {
             DebtCalculationType::Sac => {
@@ -126,7 +129,7 @@ pub struct MonthPayment {
 pub struct TableResult {
     /// The total amount paid over the lifetime of the loan.
     pub total_paid: Decimal,
-    /// Total insurance paid over the lifetime of the loan.
+    /// Total insurance cost paid over the lifetime of the loan (rate-based + fixed fee).
     pub total_insurance: Decimal,
     /// Total administration fees paid over the lifetime of the loan.
     pub total_admin_fees: Decimal,
@@ -186,6 +189,7 @@ pub fn calculate_table(
     total_months: u32,
     debt_type: DebtCalculationType,
     insurance_rate: Decimal,
+    insurance_fee: Decimal,
     admin_fee: Decimal,
     due_day: u8,
     start_date: NaiveDate,
@@ -206,6 +210,7 @@ pub fn calculate_table(
         fixed_amortization,
         monthly_interest_rate,
         insurance_rate,
+        insurance_fee,
         admin_fee,
         debt_type
     };

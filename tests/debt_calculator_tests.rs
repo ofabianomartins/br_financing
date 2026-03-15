@@ -18,6 +18,7 @@ fn default_input() -> DebtCalculationInput {
         total_months: 12,
         debt_type: DebtCalculationType::Sac,
         insurance_rate: dec!(0),
+        insurance_fee: dec!(0),
         admin_fee: dec!(0),
         due_day: 15,
         start_date: NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(),
@@ -406,4 +407,67 @@ fn test_full_price_trajectory_with_all_features() {
     assert_eq!(result.table.total_admin_fees, dec!(300.00));
     assert!(result.table.total_monetary_correction > dec!(0));
     assert_eq!(result.table.amortization_curve.len(), 12);
+}
+
+// ==================== Insurance fee tests ====================
+
+#[test]
+fn test_insurance_fee_constant_sac() {
+    let mut input = default_input();
+    input.insurance_fee = dec!(30);
+
+    let result = calculate_debt_trajectory(input).unwrap();
+
+    for payment in &result.table.amortization_curve {
+        // With rate=0, insurance_cost should equal the fixed fee
+        assert_eq!(payment.insurance_cost, dec!(30));
+    }
+    assert_eq!(result.table.total_insurance, dec!(360.00)); // 30 * 12
+}
+
+#[test]
+fn test_insurance_fee_constant_price() {
+    let mut input = default_input();
+    input.debt_type = DebtCalculationType::Price;
+    input.insurance_fee = dec!(45);
+
+    let result = calculate_debt_trajectory(input).unwrap();
+
+    for payment in &result.table.amortization_curve {
+        assert_eq!(payment.insurance_cost, dec!(45));
+    }
+    assert_eq!(result.table.total_insurance, dec!(540.00)); // 45 * 12
+}
+
+#[test]
+fn test_insurance_fee_combined_with_rate() {
+    let mut input = default_input();
+    input.insurance_rate = dec!(0.005); // 0.5% of balance
+    input.insurance_fee = dec!(20);
+
+    let result = calculate_debt_trajectory(input).unwrap();
+    let first_month = &result.table.amortization_curve[0];
+
+    // First month: 12000 * 0.005 + 20 = 60 + 20 = 80
+    assert_eq!(first_month.insurance_cost.round_dp(2), dec!(80.00));
+
+    // Insurance cost should decrease over time (rate portion decreases, fee stays)
+    let last_month = &result.table.amortization_curve[11];
+    assert!(first_month.insurance_cost > last_month.insurance_cost);
+
+    // But last month should still be >= fee (the fixed part)
+    assert!(last_month.insurance_cost >= dec!(20));
+}
+
+#[test]
+fn test_negative_insurance_fee() {
+    let mut input = default_input();
+    input.insurance_fee = dec!(-10);
+
+    let result = calculate_debt_trajectory(input);
+    assert!(result.is_err());
+    assert_eq!(
+        result.unwrap_err().to_string(),
+        "Insurance fee must be greater than or equal to zero."
+    );
 }

@@ -1,0 +1,5 @@
+total_months_zero: "Total months cannot be zero."
+invalid_due_day: "Due day must be between 1 and 31."
+negative_insurance_rate: "Insurance rate must be greater than or equal to zero."
+negative_insurance_fee: "Insurance fee must be greater than or equal to zero."
+negative_admin_fee: "Administration fee must be greater than or equal to zero."
