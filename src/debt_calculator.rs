@@ -227,14 +227,13 @@ pub fn calculate_table(
 
         payment.due_date = due_date;
 
-        // Apply monetary correction to the balance after amortization
-        let balance_after_amortization = current_balance - payment.current_amortization;
+        // Apply monetary correction to current balance (before amortization)
         let correction_rate = lookup_correction_rate(monthly_correction_rates, due_date);
-        let monetary_correction = balance_after_amortization * correction_rate / dec!(100);
+        let monetary_correction = current_balance * correction_rate;
         payment.monetary_correction = monetary_correction;
         payment.total_payment = payment.total_payment + monetary_correction;
         payment.total_paid = payment.total_paid + monetary_correction;
-        payment.new_balance = (balance_after_amortization + monetary_correction).max(dec!(0));
+        payment.new_balance = (current_balance + monetary_correction - payment.current_amortization).max(dec!(0));
 
         current_balance = payment.new_balance;
         total_paid = payment.total_paid;

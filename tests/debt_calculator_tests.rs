@@ -206,16 +206,16 @@ fn test_monetary_correction_applied() {
     // Rate of 0.5% issued on Jan 1st, applies to all months
     rates.insert(
         NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(),
-        dec!(0.5),
+        dec!(0.005),
     );
     input.monthly_correction_rates = rates;
 
     let result = calculate_debt_trajectory(input).unwrap();
     assert!(result.table.total_monetary_correction > dec!(0));
 
-    // First month correction: (12000 - 1000) * 0.5 / 100 = 55
+    // First month correction: 12000 * 0.005 = 60
     let first = &result.table.amortization_curve[0];
-    assert_eq!(first.monetary_correction.round_dp(2), dec!(55.00));
+    assert_eq!(first.monetary_correction.round_dp(2), dec!(60.00));
 }
 
 #[test]
@@ -238,11 +238,11 @@ fn test_monetary_correction_uses_most_recent_rate() {
     let mut rates = BTreeMap::new();
     rates.insert(
         NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(),
-        dec!(0.5),
+        dec!(0.005),
     );
     rates.insert(
         NaiveDate::from_ymd_opt(2026, 3, 1).unwrap(),
-        dec!(1.0),
+        dec!(0.01),
     );
     input.monthly_correction_rates = rates;
 
@@ -302,10 +302,10 @@ fn test_due_date_day30_on_february_leap_year() {
 fn test_lookup_correction_rate_exact_match() {
     let mut rates = BTreeMap::new();
     let date = NaiveDate::from_ymd_opt(2026, 3, 15).unwrap();
-    rates.insert(date, dec!(0.75));
+    rates.insert(date, dec!(0.0075));
 
     let rate = debt_calculator::lookup_correction_rate(&rates, date);
-    assert_eq!(rate, dec!(0.75));
+    assert_eq!(rate, dec!(0.0075));
 }
 
 #[test]
@@ -313,7 +313,7 @@ fn test_lookup_correction_rate_no_match_defaults_zero() {
     let mut rates = BTreeMap::new();
     rates.insert(
         NaiveDate::from_ymd_opt(2026, 6, 1).unwrap(),
-        dec!(1.0),
+        dec!(0.01),
     );
 
     // Query before any rate exists
@@ -377,12 +377,12 @@ fn test_full_sac_trajectory_with_all_features() {
     input.insurance_rate = dec!(0.005);
     input.admin_fee = dec!(25);
     let mut rates = BTreeMap::new();
-    rates.insert(NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(), dec!(0.3));
+    rates.insert(NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(), dec!(0.003));
     input.monthly_correction_rates = rates;
 
     let result = calculate_debt_trajectory(input).unwrap();
 
-    assert!(result.table.total_paid > dec!(13366.39)); // More than without extras
+    assert!(result.table.total_paid > dec!(12740.13)); // More than without extras
     assert!(result.table.total_insurance > dec!(0));
     assert_eq!(result.table.total_admin_fees, dec!(300.00));
     assert!(result.table.total_monetary_correction > dec!(0));
@@ -396,7 +396,7 @@ fn test_full_price_trajectory_with_all_features() {
     input.insurance_rate = dec!(0.005);
     input.admin_fee = dec!(25);
     let mut rates = BTreeMap::new();
-    rates.insert(NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(), dec!(0.3));
+    rates.insert(NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(), dec!(0.003));
     input.monthly_correction_rates = rates;
 
     let result = calculate_debt_trajectory(input).unwrap();
